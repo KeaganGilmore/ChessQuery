@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chessboard – URL FEN</title>
+    <style>
+        :root {
+            --size: 480px;         /* board width/height */
+            --piece: 48px;         /* piece font size */
+            --radius: 14px;
+            --shadow: 0 10px 30px rgba(0,0,0,.25);
+            --border: 1px solid rgba(0,0,0,.15);
+            --label: rgba(0,0,0,.55);
+            --highlight: #ffd54a;
+            /* default theme (classic brown) */
+            --light: #f0d9b5;
+            --dark:  #b58863;
+        }
+
+        /* Themes (switch via data-theme on <body>) */
+        body[data-theme="blue"]  { --light: #e8eefb; --dark:#5f79ad; --highlight:#ffd54a; }
+        body[data-theme="green"] { --light: #eeeed2; --dark:#769656; --highlight:#ffeb3b; }
+        body[data-theme="gray"]  { --light: #e7e7e7; --dark:#9e9e9e; --highlight:#ffe082; }
+        body { margin: 0; background: #0b0c10; display:grid; place-items:center; min-height:100svh; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+
+        .wrap { padding: 16px; }
+
+        .board {
+            width: var(--size);
+            height: var(--size);
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-auto-rows: 1fr;
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            position: relative;
+            background: linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,0)) content-box;
+            border: var(--border);
+        }
+
+        .sq {
+            display:flex; align-items:center; justify-content:center;
+            line-height: 1; user-select:none;
+            position: relative;
+            font-size: var(--piece);
+            transition: transform .06s ease;
+            will-change: transform;
+        }
+
+        /* checker pattern */
+        .sq[data-color="light"] { background: var(--light); }
+        .sq[data-color="dark"]  { background: var(--dark); }
+
+        /* piece aesthetic */
+        .piece {
+            filter: drop-shadow(0 1px 0 rgba(255,255,255,.35)) drop-shadow(0 2px 4px rgba(0,0,0,.35));
+            transform: translateZ(0);
+            font-family: "Noto Sans Symbols2", "Segoe UI Symbol", "DejaVu Sans", Symbola, Arial, sans-serif;
+        }
+
+        /* coordinate labels (optional) */
+        .label-file, .label-rank {
+            position: absolute; font-size: clamp(9px, calc(var(--size) / 36), 12px); color: var(--label);
+            pointer-events: none; text-shadow: 0 1px 0 rgba(255,255,255,.3);
+        }
+        .label-file { bottom: 4px; right: 6px; }
+        .label-rank { top: 4px; left: 6px; }
+
+        /* highlights */
+        .hl { box-shadow: inset 0 0 0 3px var(--highlight); }
+        .last { box-shadow: inset 0 0 0 3px #ffd1a1; }
+
+        /* tiny badge for errors */
+        .error {
+            position: absolute; inset: auto 8px 8px 8px; padding: 8px 10px; border-radius: 10px;
+            background: rgba(0,0,0,.7); color: #fff; font-size: 12px; line-height:1.3;
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div id="board" class="board" role="img" aria-label="Chessboard"></div>
+</div>
+
+<script>
+    (function(){
+        const params = new URLSearchParams(location.search);
+
+        const startingFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+        const fenParam = (params.get('fen')||'start').trim();
+        const fen = fenParam.toLowerCase()==='start' ? startingFEN : fenParam;
+
+        const size = Math.max(180, Math.min(1200, parseInt(params.get('size')||'480',10)||480));
+        const orientation = /^(black|b|1|true)$/i.test(params.get('orientation')||params.get('flip')||'') ? 'black' : 'white';
+        const showCoords = params.has('coords') ? !/^(0|false|no)$/i.test(params.get('coords')) : true; // default on
+        const theme = (params.get('theme')||'classic').toLowerCase();
+
+        // optional highlights
+        const hl = new Set(((params.get('hl')||'') + '').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean));
+        const last = (params.get('lastmove')||'').toLowerCase(); // e2e4
+
+        document.body.dataset.theme = ({classic:'', brown:''}[theme]===undefined ? theme : '');
+
+        const boardEl = document.getElementById('board');
+        boardEl.style.setProperty('--size', size + 'px');
+        boardEl.style.setProperty('--piece', (size/8*0.8) + 'px');
+
+        const filesW = ['a','b','c','d','e','f','g','h'];
+        const filesB = [...filesW].reverse();
+        const ranksW = [8,7,6,5,4,3,2,1];
+        const ranksB = [1,2,3,4,5,6,7,8];
+        const files = orientation==='white' ? filesW : filesB;
+        const ranks = orientation==='white' ? ranksW : ranksB;
+
+        const PIECE = {
+            'p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚',
+            'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔',
+        };
+
+        function parseFENPosition(f){
+            const part = f.split(' ')[0];
+            const rows = part.split('/');
+            if(rows.length!==8) throw new Error('FEN must have 8 ranks');
+            const map = new Map(); // square -> symbol
+            for(let r=0;r<8;r++){
+                const rankStr = rows[r];
+                let fileIdx = 0;
+                for(const ch of rankStr){
+                    if(/^[1-8]$/.test(ch)){ fileIdx += parseInt(ch,10); }
+                    else if(/[prnbqkPRNBQK]/.test(ch)){
+                        if(fileIdx>7) throw new Error('Too many files in a rank');
+                        const sq = filesW[fileIdx] + (8 - r); // FEN is always from 8 -> 1, a -> h
+                        map.set(sq, ch);
+                        fileIdx++;
+                    } else {
+                        throw new Error('Invalid FEN char: ' + ch);
+                    }
+                }
+                if(fileIdx!==8) throw new Error('Rank does not have 8 files');
+            }
+            return map;
+        }
+
+        let fenMap; let errMsg = '';
+        try { fenMap = parseFENPosition(fen); }
+        catch(e){ errMsg = e.message; fenMap = parseFENPosition(startingFEN); }
+
+        const lastFrom = last && last.length===4 ? last.slice(0,2) : null;
+        const lastTo   = last && last.length===4 ? last.slice(2,4) : null;
+
+        function colorOf(file, rank){
+            // a1 is dark in this scheme -> adjust so a1 is dark, h8 is dark
+            const fIndex = filesW.indexOf(file);
+            return ((fIndex + rank) % 2 === 0) ? 'dark' : 'light';
+        }
+
+        // build board
+        const frag = document.createDocumentFragment();
+        for(const r of ranks){
+            for(const f of files){
+                const sq = f + r;
+                const cell = document.createElement('div');
+                cell.className = 'sq';
+                cell.dataset.square = sq;
+                cell.dataset.color = colorOf(f, r);
+
+                const sym = fenMap.get(sq);
+                if(sym){
+                    const span = document.createElement('span');
+                    span.className = 'piece';
+                    span.textContent = PIECE[sym] || '';
+                    span.setAttribute('aria-label', sym + ' on ' + sq);
+                    cell.appendChild(span);
+                }
+
+                if(showCoords){
+                    if(f === (orientation==='white' ? 'a' : 'h')){
+                        const rk = document.createElement('span'); rk.className='label-rank'; rk.textContent=r; cell.appendChild(rk);
+                    }
+                    if(r === (orientation==='white' ? 1 : 8)){
+                        const fl = document.createElement('span'); fl.className='label-file'; fl.textContent=f.toUpperCase(); cell.appendChild(fl);
+                    }
+                }
+
+                if(hl.has(sq)) cell.classList.add('hl');
+                if(lastFrom===sq || lastTo===sq) cell.classList.add('last');
+
+                frag.appendChild(cell);
+            }
+        }
+        boardEl.appendChild(frag);
+
+        if(errMsg){
+            const e = document.createElement('div');
+            e.className = 'error';
+            e.textContent = 'Invalid FEN in URL. Showing fallback. (' + errMsg + ')';
+            boardEl.appendChild(e);
+        }
+
+        // Accessible name
+        boardEl.setAttribute('aria-label', 'Chessboard ' + (orientation==='white'?'white bottom':'black bottom'));
+    })();
+</script>
+</body>
+</html>
