@@ -8,7 +8,7 @@ Supports board orientation, themes, highlights, and coordinate labels.
 1. Open `index.html` in your browser.
 2. Add FEN and options as URL parameters, e.g.:
 
-'index.html?fen=rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR&theme=blue&orientation=black'
+'index.html?fen=r1bq1rk1/pppnbppp/4pn2/3p2B1/2PP4/2N1PN2/PP3PPP/R2QKB1R%20w%20KQ%20-%201%207&theme=green&hl=d4,e4,d5,e6&lastmove=b8d7'
 
 ### URL Parameters
 
